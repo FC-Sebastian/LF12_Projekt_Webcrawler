@@ -13,6 +13,9 @@ public class WebCrawlUI extends JDialog {
     private DatePicker datePickerTo;
     private JTextArea output;
 
+    /**
+     * Adding some listeners, setting Element-options
+     */
     public WebCrawlUI() {
         setContentPane(contentPane);
 
@@ -25,6 +28,9 @@ public class WebCrawlUI extends JDialog {
         setModal(true);
     }
 
+    /**
+     * opens gui
+     */
     public static void main(String[] args) {
         WebCrawlUI dialog = new WebCrawlUI();
         dialog.pack();
@@ -33,6 +39,9 @@ public class WebCrawlUI extends JDialog {
         System.exit(0);
     }
 
+    /**
+     * Gets energy-data from webcrawler and displays results in output
+     */
     private void getData() {
         WebCrawler crawler = new WebCrawler();
         LocalDate from = datePickerFrom.getDate();

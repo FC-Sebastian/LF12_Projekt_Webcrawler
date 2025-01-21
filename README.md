@@ -11,6 +11,8 @@ Nachdem ein von und bis Datum gewählt wurden lädt das Programm die relevanten 
 ### ToDo:
 Datenbankanbindung,
 
+Error-Handling,
+
 Visuelle aufbereitung der Daten,
 
 Fortschrittsbalken bei größeren abfragen,

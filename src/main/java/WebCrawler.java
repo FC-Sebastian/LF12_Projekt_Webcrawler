@@ -32,6 +32,13 @@ public class WebCrawler {
 
     private String[] headers;
 
+    /**
+     * Gets energy data from Agorameter-website, splits larger requests (1 year and above) into multiple requests
+     *
+     * @param from from date
+     * @param to to date
+     * @return arraylist containing relevant energy data
+     */
     public List<String[]> getEnergyData(LocalDate from, LocalDate to) {
         List<String[]> data = new ArrayList<>();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
@@ -68,6 +75,13 @@ public class WebCrawler {
         return data;
     }
 
+    /**
+     * for future use, used to filter recently requested csv-data by header
+     *
+     * @param data csv-data
+     * @param header csv header
+     * @return filtered list
+     */
     public List<String[]> getHeaderData(List<String[]> data, String header) {
         List<String[]> returnList = new ArrayList<>();
         int headerIndex = getHeaderIndex(header);
@@ -78,6 +92,12 @@ public class WebCrawler {
         return returnList;
     }
 
+    /**
+     * Handles download of energy data as csv for given timespan
+     *
+     * @param timeString timespan as url parameter
+     * @return csv-data
+     */
     private List<String[]> handleDownload(String timeString) {
         initWebDriver();
         List<String[]> data = new ArrayList<>();
@@ -99,6 +119,12 @@ public class WebCrawler {
         return data;
     }
 
+    /**
+     * Parses recently downloaded csv and returns its contents as ArrayList
+     *
+     * @return list containing csv-data
+     * @throws IOException if file not found
+     */
     private List<String[]> getCsvData() throws IOException {
         BufferedReader reader = new BufferedReader(new FileReader(downloadPath + "\\" + csvName));
         headers = reader.readLine().split(",");
@@ -111,6 +137,11 @@ public class WebCrawler {
         return data;
     }
 
+    /**
+     * Waits for Download to finish, returns true on success or false on failure/timeout
+     *
+     * @return bool
+     */
     private boolean confirmDownload() {
         // waiting for download to finish
         File csvFile = new File(downloadPath, csvName);
@@ -123,6 +154,11 @@ public class WebCrawler {
         return downloadWait.until(f -> f.exists() && f.canRead());
     }
 
+    /**
+     * Navigates WebDriver to Agorameter, waits for download button to be clickable and downloads results as csv
+     *
+     * @param timeString timespan to get data for
+     */
     private void startDownload(String timeString) {
         chrDriver.manage().timeouts().implicitlyWait(0, TimeUnit.SECONDS);
         chrDriver.get(url +  timeString);
@@ -147,10 +183,18 @@ public class WebCrawler {
         }
     }
 
+    /**
+     * Scrolls given element into view using javascript
+     *
+     * @param element WebElement
+     */
     private void scrollElementIntoView(WebElement element) {
         ((JavascriptExecutor) chrDriver).executeScript("arguments[0].scrollIntoView(true);", element);
     }
 
+    /**
+     * initialises WebDriver, sets download directory and prevents popups
+     */
     private void initWebDriver() {
         // setting options
         System.setProperty("webdriver.chrome.driver",System.getProperty("user.dir") + "\\ChromeDriver\\chromedriver-win64\\chromedriver.exe");
@@ -167,6 +211,12 @@ public class WebCrawler {
         chrDriver = new ChromeDriver(chrOpt);
     }
 
+    /**
+     * gets index of given header from csv headers
+     *
+     * @param header header as string
+     * @return index int
+     */
     private int getHeaderIndex(String header) {
         for (int i = 0; i < headers.length; i++) {
             if (Objects.equals(headers[i], header)) {
