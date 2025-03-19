@@ -1,7 +1,7 @@
 package controller;
 
-import model.EnergyDataset;
 import org.openqa.selenium.*;
+import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
@@ -17,16 +17,17 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
-
 import static java.time.temporal.ChronoUnit.DAYS;
 
 public class WebCrawler {
-
+    private final String url = "https://www.agora-energiewende.de/daten-tools/agorameter/chart/today/power_generation/";
+    private final String downloadButtonClass = "cd_excel";
+    private final String csvName = "stromerzeugung_und_-verbrauch.csv";
+    private final int requestMaxDays = 364;
+    private WebDriver chrDriver;
+    private String downloadPath;
     private final String[] relevantHeaders = {
             "Biomasse",
             "Steinkohle",
@@ -40,14 +41,16 @@ public class WebCrawler {
             "Kernkraft",
             "Andere"
     };
-    private final String csvName = "stromerzeugung_und_-verbrauch.csv";
-    private final String url = "https://www.agora-energiewende.de/daten-tools/agorameter/chart/today/power_generation/";
-    private final String downloadButtonClass = "cd_excel";
-    private final int requestMaxDays = 364;
-    private WebDriver chrDriver;
-    private String downloadPath;
-
     private String[] headers;
+    private List<String> dateTimes;
+
+    public String[] getHeaders() {
+        return relevantHeaders;
+    }
+
+    public List<String> getDateTimes() {
+        return dateTimes;
+    }
 
     /**
      * Gets energy data from Agorameter-website, splits larger requests (1 year and above) into multiple requests
@@ -56,57 +59,42 @@ public class WebCrawler {
      * @param to to date
      * @return arraylist containing relevant energy data
      */
-    public List<EnergyDataset> getEnergyData(LocalDate from, LocalDate to) {
-        List<EnergyDataset> data = new ArrayList<>();
+    public HashMap<String,HashMap<String,String>> getEnergyData(LocalDate from, LocalDate to) {
+        HashMap<String,HashMap<String,String>> data = new HashMap<>();
+        dateTimes = new ArrayList<>();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
         if (DAYS.between(from, to) < 365) {
-            data = handleDownload(from.format(formatter) + "/" + to.format(formatter) + "/hourly");
+            data.putAll(handleDownload(from.format(formatter) + "/" + to.format(formatter) + "/hourly"));
         } else {
             long between = DAYS.between(from, to);
-            LocalDate newFrom = from;
             boolean fetching = true;
 
             while (fetching) {
                 LocalDate tempTo;
 
+                if (data.size() > 0) {
+                    System.out.println(from.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))+"T00:00:00");
+                    data.remove(from.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))+"T00:00:00");
+                } else {
+                    System.out.println("no size");
+                }
+
                 if (between - requestMaxDays < 1) {
                     tempTo = to;
                     fetching = false;
                 } else {
-                    tempTo = newFrom.plusDays(requestMaxDays);
+                    tempTo = from.plusDays(requestMaxDays);
                     between -= requestMaxDays;
                 }
 
-                System.out.println("NEW LOOP");
-                System.out.println("FROM: "+ newFrom.format(formatter));
-                System.out.println("TO: " + tempTo.format(formatter));
-                System.out.println();
+                data.putAll(handleDownload(from.format(formatter) + "/" + tempTo.format(formatter) + "/hourly"));
 
-                data.addAll(handleDownload(newFrom.format(formatter) + "/" + tempTo.format(formatter) + "/hourly"));
-
-                newFrom = tempTo.plusDays(1);
+                from = tempTo.plusDays(1);
             }
         }
 
         return data;
-    }
-
-    private void dbImport(List<String[]> data) throws SQLException {
-        System.out.println("import start");
-        List<String[]> batchData = new ArrayList<>();
-        for (String header: relevantHeaders) {
-            System.out.println("HEADER: "+header);
-            int headerIndex = getHeaderIndex(header);
-            int dateIndex = getHeaderIndex("date_id");
-            if (!(headerIndex < 0) && !(dateIndex < 0)) { //index will be -1 if not found in csv
-                for (String[] resultSet: data) {
-                    batchData.add(new String[]{resultSet[dateIndex], header, resultSet[headerIndex]});
-                }
-            }
-        }
-        EnergyDataset model = new EnergyDataset();
-        model.batchInsert(batchData);
     }
 
     /**
@@ -115,9 +103,10 @@ public class WebCrawler {
      * @param timeString timespan as url parameter
      * @return csv-data
      */
-    private List<EnergyDataset> handleDownload(String timeString) {
+    private HashMap<String, HashMap<String,String>> handleDownload(String timeString) {
         initWebDriver();
         List<String[]> data = new ArrayList<>();
+
         try {
             startDownload(timeString);
 
@@ -129,7 +118,7 @@ public class WebCrawler {
             }
         } catch (Exception e) {
             System.out.println("Something went wrong, check your internet connection");
-            e.printStackTrace();
+            System.out.println(e.getMessage());
         }
 
         if (data.size() > 0) {
@@ -138,59 +127,30 @@ public class WebCrawler {
             } catch (SQLException e) {
                 System.out.println("DB ERROR");
                 System.out.println(e.getMessage());
-                e.printStackTrace();
-            }
-        }
-
-        List<EnergyDataset> returnList = new ArrayList<>();
-        for (String header: relevantHeaders) {
-            System.out.println("HEADER: " + header);
-            int headerIndex = getHeaderIndex(header);
-            int dateIndex = getHeaderIndex("date_id");
-            if (!(headerIndex < 0) && !(dateIndex < 0)) { //index will be -1 if not found in csv
-                for (String[] dataSet: data) {
-                    returnList.add(new EnergyDataset(dataSet[dateIndex], header, dataSet[headerIndex]));
-                }
             }
         }
 
         chrDriver.close();
-        return returnList;
+        return buildHashMap(data);
     }
 
     /**
-     * Parses recently downloaded csv and returns its contents as ArrayList
-     *
-     * @return list containing csv-data
-     * @throws IOException if file not found
+     * initialises WebDriver, sets download directory and prevents popups
      */
-    private List<String[]> getCsvData() throws IOException {
-        BufferedReader reader = new BufferedReader(new FileReader(downloadPath + "\\" + csvName));
-        headers = reader.readLine().split(",");
-        List<String[]> data = new ArrayList<>();
+    private void initWebDriver() {
+        // setting options
+        System.setProperty("webdriver.chrome.driver",System.getProperty("user.dir") + "\\ChromeDriver\\chromedriver-win64\\chromedriver.exe");
+        HashMap<String, Object> chromePrefs = new HashMap<>();
+        chromePrefs.put("profile.default_content_settings.popups", 0);
 
-        String line;
-        while ((line = reader.readLine()) != null) {
-            data.add(line.split(","));
-        }
-        return data;
-    }
+        downloadPath = System.getProperty("user.dir") + "\\downloads\\" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("ddMMyy_HHmmss"));
+        chromePrefs.put("download.default_directory", downloadPath);
+        ChromeOptions chrOpt = new ChromeOptions();
+        chrOpt.addArguments("--headless");
+        chrOpt.setExperimentalOption("prefs",chromePrefs);
 
-    /**
-     * Waits for Download to finish, returns true on success or false on failure/timeout
-     *
-     * @return bool
-     */
-    private boolean confirmDownload() {
-        // waiting for download to finish
-        File csvFile = new File(downloadPath, csvName);
-
-        Wait<File> downloadWait = new FluentWait<>(csvFile)
-                .withTimeout(Duration.ofSeconds(300))
-                .pollingEvery(Duration.ofSeconds(1))
-                .ignoring(Exception.class)
-                .withMessage("File didnt load in 5 mins");
-        return downloadWait.until(f -> f.exists() && f.canRead());
+        // initiating webDriver
+        chrDriver = new ChromeDriver(chrOpt);
     }
 
     /**
@@ -212,7 +172,7 @@ public class WebCrawler {
 
         // Wait for the button to be clickable then scroll it into view
         pageLoadWait.until(ExpectedConditions.elementToBeClickable(downloadButton));
-        scrollElementIntoView(downloadButton);
+        ((JavascriptExecutor) chrDriver).executeScript("arguments[0].scrollIntoView(true);", downloadButton);
 
         // Optional: Click using JavaScript if standard click fails
         try {
@@ -223,31 +183,86 @@ public class WebCrawler {
     }
 
     /**
-     * Scrolls given element into view using javascript
+     * Waits for Download to finish, returns true on success or false on failure/timeout
      *
-     * @param element WebElement
+     * @return bool
      */
-    private void scrollElementIntoView(WebElement element) {
-        ((JavascriptExecutor) chrDriver).executeScript("arguments[0].scrollIntoView(true);", element);
+    private boolean confirmDownload() {
+        // waiting for download to finish
+        File csvFile = new File(downloadPath, csvName);
+
+        Wait<File> downloadWait = new FluentWait<>(csvFile)
+                .withTimeout(Duration.ofSeconds(300))
+                .pollingEvery(Duration.ofSeconds(1))
+                .ignoring(Exception.class)
+                .withMessage("File didnt load in 5 mins");
+        return downloadWait.until(f -> f.exists() && f.canRead());
     }
 
     /**
-     * initialises WebDriver, sets download directory and prevents popups
+     * Parses recently downloaded csv and returns its contents as ArrayList
+     *
+     * @return list containing csv-data
+     * @throws IOException if file not found
      */
-    private void initWebDriver() {
-        // setting options
-        System.setProperty("webdriver.chrome.driver",System.getProperty("user.dir") + "\\ChromeDriver\\chromedriver-win64\\chromedriver.exe");
-        HashMap<String, Object> chromePrefs = new HashMap<>();
-        chromePrefs.put("profile.default_content_settings.popups", 0);
+    private List<String[]> getCsvData() throws IOException {
+        BufferedReader reader = new BufferedReader(new FileReader(downloadPath + "\\" + csvName));
+        headers = reader.readLine().split(",");
+        List<String[]> data = new ArrayList<>();
 
-        downloadPath = System.getProperty("user.dir") + "\\downloads\\" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("ddMMyy_HHmmss"));
-        chromePrefs.put("download.default_directory", downloadPath);
-        ChromeOptions chrOpt = new ChromeOptions();
-        chrOpt.addArguments("--headless");
-        chrOpt.setExperimentalOption("prefs",chromePrefs);
+        String line;
+        while ((line = reader.readLine()) != null) {
+            String[] splitLine = line.split(",");
+            data.add(splitLine);
+            dateTimes.add(splitLine[getHeaderIndex("date_id")]);
+        }
+        return data;
+    }
 
-        // initiating webDriver
-        chrDriver = new ChromeDriver(chrOpt);
+    /**
+     * formats csv data into list of datasets resembling database table (timestamp, header as string, value)
+     *
+     * @param data csv data as list
+     * @throws SQLException if connection problems occur
+     */
+    private void dbImport(List<String[]> data) throws SQLException {
+        List<String[]> batchData = new ArrayList<>();
+        for (String header: relevantHeaders) {
+            int headerIndex = getHeaderIndex(header);
+            int dateIndex = getHeaderIndex("date_id");
+            if (!(headerIndex < 0) && !(dateIndex < 0)) { //index will be -1 if not found in csv
+                for (String[] resultSet: data) {
+                    batchData.add(new String[]{resultSet[dateIndex], header, resultSet[headerIndex]});
+                }
+            }
+        }
+        DatabaseHandler dbHandler = new DatabaseHandler();
+        dbHandler.batchInsert(batchData);
+    }
+
+    /**
+     * Builds and returns csv data formatted as hashmap.
+     * the outer loop loops through the individual csv rows
+     * the inner loop loops through relevant headers and adds the values to returned hashmap
+     * this is done to reduce access time when displaying data in table
+     *
+     * @param data unformatted csv data
+     */
+    private HashMap<String, HashMap<String,String>> buildHashMap(List<String[]> data) {
+        HashMap<String,HashMap<String,String>> returnList = new HashMap<>();
+        for (String[] dataSet: data) {
+            HashMap<String,String> nestedList = new HashMap<>();
+            int dateIndex = getHeaderIndex("date_id");
+            for (String header: relevantHeaders) {
+                int headerIndex = getHeaderIndex(header);
+                if (!(headerIndex < 0)) { //index will be -1 if not found in csv
+                    nestedList.put(header,dataSet[headerIndex]);
+                }
+            }
+            //LocalDate date = LocalDate.parse(dataSet[dateIndex], ISO_LOCAL_DATE_TIME);
+            returnList.put(dataSet[dateIndex], nestedList);
+        }
+        return returnList;
     }
 
     /**
